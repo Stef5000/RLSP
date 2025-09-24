@@ -17,7 +17,7 @@ Install Instructions:
 Example:
 
 This Example will move an Agent to a goal with the discrete PPO Model
-
+```
 extends Node2D
 
 @onready var agent: Sprite2D = $Agent
@@ -111,3 +111,4 @@ func _physics_process(delta: float) -> void:
 	current_observation = next_observation
 	if done:
 		start_new_episode()
+```
