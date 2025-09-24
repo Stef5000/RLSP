@@ -24,7 +24,7 @@ def find_sources(dirs, exts):
     return sources
 
 # Configuration
-libname = "plugin_name"
+libname = "rlsp"
 projectdir = "test_project"
 
 # Set up the environment
@@ -53,7 +53,7 @@ opts.Add(EnumVariable(
 # You can either specify "disabled_classes", OR
 # explicitly specify "enabled_classes" which disables all other classes.
 
-is_2d_profile_used = False
+is_2d_profile_used = True
 is_3d_profile_used = False
 is_custom_profile_used = False
 if is_2d_profile_used:

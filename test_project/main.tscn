@@ -1,6 +1,16 @@
-[gd_scene load_steps=2 format=3 uid="uid://hn8dh5y3yq6a"]
+[gd_scene load_steps=3 format=3 uid="uid://hn8dh5y3yq6a"]
 
 [ext_resource type="Script" uid="uid://gscsivoywwwo" path="res://main.gd" id="1_ig7tw"]
+[ext_resource type="Texture2D" uid="uid://bioamopp6syek" path="res://icon.svg" id="2_0xm2m"]
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_ig7tw")
+
+[node name="Agent" type="Sprite2D" parent="."]
+position = Vector2(117, 113)
+scale = Vector2(0.5, 0.5)
+texture = ExtResource("2_0xm2m")
+
+[node name="Goal" type="Sprite2D" parent="."]
+position = Vector2(1004, 473)
+texture = ExtResource("2_0xm2m")
