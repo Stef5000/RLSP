@@ -2,9 +2,9 @@ Native reinforcement-learning algorithms for Godot!
 -
 Supported algorithms:
 
--PPO (Discrete, CPU) as ppo
+-PPO (Discrete, CPU) as PPO
 
--PPO (Continous, CPU) as ppoc
+-PPO (Continous, CPU) as PPOC
 
 
 Install Instructions:
