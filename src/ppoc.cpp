@@ -47,11 +47,9 @@ godot::PackedByteArray PPOC::eigen_vector_to_byte_array(const Eigen::VectorXf& v
 }
 Eigen::VectorXf PPOC::byte_array_to_eigen_vector(const godot::PackedByteArray& byte_arr, int size) {
     if (size < 0) {
-        godot::UtilityFunctions::printerr("PPOC::byte_array_to_eigen_vector: Invalid negative size: ", size);
         return Eigen::VectorXf();
     }
     if (byte_arr.size() != static_cast<uint64_t>(size) * sizeof(float)) {
-        godot::UtilityFunctions::printerr("PPOC::byte_array_to_eigen_vector: Size mismatch. Expected bytes: ", static_cast<uint64_t>(size) * sizeof(float), ", got: ", byte_arr.size());
         return Eigen::VectorXf::Zero(size);
     }
     if (size == 0) return Eigen::VectorXf();
@@ -70,7 +68,6 @@ godot::PackedByteArray PPOC::eigen_matrix_to_byte_array(const Eigen::MatrixXf& m
             if (static_cast<uint64_t>(k) * sizeof(float) + sizeof(float) <= static_cast<uint64_t>(byte_array.size())) {
                  memcpy(byte_array.ptrw() + k * sizeof(float), &val, sizeof(float));
             } else {
-                godot::UtilityFunctions::printerr("PPOC::eigen_matrix_to_byte_array: Buffer overflow attempt.");
                 return godot::PackedByteArray(); 
             }
             k++;
@@ -80,11 +77,9 @@ godot::PackedByteArray PPOC::eigen_matrix_to_byte_array(const Eigen::MatrixXf& m
 }
 Eigen::MatrixXf PPOC::byte_array_to_eigen_matrix(const godot::PackedByteArray& byte_arr, int rows, int cols) {
     if (rows < 0 || cols < 0) {
-        godot::UtilityFunctions::printerr("PPOC::byte_array_to_eigen_matrix: Invalid negative dimensions: rows=", rows, ", cols=", cols);
         return Eigen::MatrixXf();
     }
     if (byte_arr.size() != static_cast<uint64_t>(rows) * cols * sizeof(float)) {
-        godot::UtilityFunctions::printerr("PPOC::byte_array_to_eigen_matrix: Size mismatch. Expected bytes: ", static_cast<uint64_t>(rows) * cols * sizeof(float), ", got: ", byte_arr.size());
         return Eigen::MatrixXf::Zero(rows, cols);
     }
     if (rows == 0 || cols == 0) return Eigen::MatrixXf(rows,cols);
@@ -97,7 +92,6 @@ Eigen::MatrixXf PPOC::byte_array_to_eigen_matrix(const godot::PackedByteArray& b
                 memcpy(&val, byte_arr.ptr() + k * sizeof(float), sizeof(float));
                 mat(r, c) = val;
             } else {
-                 godot::UtilityFunctions::printerr("PPOC::byte_array_to_eigen_matrix: Buffer underflow attempt.");
                  return Eigen::MatrixXf::Zero(rows,cols);
             }
             k++;
@@ -123,7 +117,7 @@ Eigen::VectorXf apply_activation(const Eigen::VectorXf& x, ActivationType type) 
             if (std::abs(sum_exp_x) < 1e-8f) return Eigen::VectorXf::Constant(x.size(), 1.0f/static_cast<float>(x.size()));
             return exp_x / sum_exp_x;
         }
-        default: godot::UtilityFunctions::printerr("PPOInternalContinuous::apply_activation: Unknown type."); return x;
+        default: return x;
     }
 }
 
@@ -134,8 +128,8 @@ Eigen::MatrixXf activation_derivative(const Eigen::VectorXf& activated_output, A
         case ActivationType::RELU: derivatives = activated_output.unaryExpr([](float v){ return v > 0.0f ? 1.0f : 0.0f; }); break;
         case ActivationType::TANH: derivatives = activated_output.unaryExpr([](float v){ return 1.0f - v * v; }); break;
         case ActivationType::LINEAR: derivatives = Eigen::VectorXf::Ones(activated_output.size()); break;
-        case ActivationType::SOFTMAX: godot::UtilityFunctions::printerr("PPOInternalContinuous::activation_derivative: Softmax derivative requested (usually implicit)."); derivatives = Eigen::VectorXf::Ones(activated_output.size()); break;
-        default: godot::UtilityFunctions::printerr("PPOInternalContinuous::activation_derivative: Unknown type."); derivatives = Eigen::VectorXf::Ones(activated_output.size());
+        case ActivationType::SOFTMAX: derivatives = Eigen::VectorXf::Ones(activated_output.size()); break;
+        default: derivatives = Eigen::VectorXf::Ones(activated_output.size());
     }
     return derivatives.asDiagonal();
 }
@@ -158,7 +152,7 @@ public:
     }
 
     void add_layer(int input_dim, int output_dim, ActivationType activation) {
-        if (input_dim <=0 || output_dim <=0) {godot::UtilityFunctions::printerr("NeuralNetworkContinuous add_layer: Invalid dimensions."); return;}
+        if (input_dim <=0 || output_dim <=0) {return;}
         float limit = std::sqrt(6.0f / static_cast<float>(input_dim + output_dim));
         std::uniform_real_distribution<float> dist(-limit, limit);
         Eigen::MatrixXf W(output_dim, input_dim);
@@ -172,13 +166,13 @@ public:
     Eigen::VectorXf forward(const Eigen::VectorXf& input) {
         layer_outputs_pre_activation_.clear(); layer_outputs_activated_.clear();
         if (input.size() == 0 && !weights_.empty() && weights_[0].cols() != 0) { 
-             godot::UtilityFunctions::printerr("NeuralNetworkContinuous forward: Empty input to non-empty network."); return Eigen::VectorXf();
+             return Eigen::VectorXf();
         }
         Eigen::VectorXf current_output = input;
         layer_outputs_activated_.push_back(current_output); 
         for (size_t i = 0; i < weights_.size(); ++i) {
             if (weights_[i].cols() != current_output.size()) {
-                godot::UtilityFunctions::printerr("NeuralNetworkContinuous forward: Dim mismatch layer ", i); return Eigen::VectorXf();
+                return Eigen::VectorXf();
             }
             Eigen::VectorXf pre_activation = weights_[i] * current_output + biases_[i];
             layer_outputs_pre_activation_.push_back(pre_activation);
@@ -191,7 +185,7 @@ public:
     void backward(const Eigen::VectorXf& loss_gradient_wrt_output) {
         if (weights_.empty() || loss_gradient_wrt_output.size() == 0 || layer_outputs_activated_.empty()) return;
         if (layer_outputs_activated_.back().size() != loss_gradient_wrt_output.size()){
-            godot::UtilityFunctions::printerr("NeuralNetworkContinuous backward: Mismatch final layer output and loss_gradient."); return;
+            return;
         }
 
         grad_weights_.assign(weights_.size(), Eigen::MatrixXf());
@@ -200,13 +194,13 @@ public:
 
         for (int i = static_cast<int>(weights_.size()) - 1; i >= 0; --i) {
             if (layer_outputs_activated_.size() <= static_cast<size_t>(i+1) || layer_activations_.size() <= static_cast<size_t>(i)) {
-                 godot::UtilityFunctions::printerr("NeuralNetworkContinuous backward: Index out of bounds for internal layers."); return;
+                 return;
             }
             Eigen::MatrixXf act_deriv_diag = activation_derivative(layer_outputs_activated_[i+1], layer_activations_[i]);
             Eigen::VectorXf delta_pre_activation = act_deriv_diag.diagonal().cwiseProduct(current_delta); 
             
             if (layer_outputs_activated_.size() <= static_cast<size_t>(i)) {
-                godot::UtilityFunctions::printerr("NeuralNetworkContinuous backward: Index out of bounds for grad calculation."); return;
+                return;
             }
             grad_weights_[i] = delta_pre_activation * layer_outputs_activated_[i].transpose();
             grad_biases_[i] = delta_pre_activation;
@@ -227,15 +221,14 @@ public:
     }
 
     bool load_parameters_binary(const godot::Ref<godot::FileAccess>& file) {
-        uint32_t num_layers = file->get_32();
-        if (file->get_error() != godot::OK) {godot::UtilityFunctions::printerr("NeuralNetworkContinuous load_binary: Error reading num_layers."); return false;}
-        if (num_layers != weights_.size()) { godot::UtilityFunctions::printerr("NeuralNetworkContinuous load_binary: Layer count mismatch."); return false; }
+        uint32_t num_layers = file->get_32(); if (file->get_error() != godot::OK) { return false;}
+        if (num_layers != weights_.size()) { return false; }
 
         for (size_t i = 0; i < num_layers; ++i) {
             uint32_t w_r = file->get_32(); if(file->get_error()!=godot::OK)return false; uint32_t w_c = file->get_32(); if(file->get_error()!=godot::OK)return false; uint32_t b_s = file->get_32(); if(file->get_error()!=godot::OK)return false;
-            if (weights_[i].rows()!=static_cast<Eigen::Index>(w_r) || weights_[i].cols()!=static_cast<Eigen::Index>(w_c) || biases_[i].size()!=static_cast<Eigen::Index>(b_s)) { godot::UtilityFunctions::printerr("NeuralNetworkContinuous load_binary: Dim mismatch L",i); return false; }
-            weights_[i] = PPOC::byte_array_to_eigen_matrix(file->get_buffer(static_cast<uint64_t>(w_r)*w_c*sizeof(float)), w_r, w_c); if(file->get_error()!=godot::OK && !file->eof_reached()){godot::UtilityFunctions::printerr("NNCont load W", i); return false;}
-            biases_[i] = PPOC::byte_array_to_eigen_vector(file->get_buffer(static_cast<uint64_t>(b_s)*sizeof(float)), b_s); if(file->get_error()!=godot::OK && !file->eof_reached()){godot::UtilityFunctions::printerr("NNCont load B", i); return false;}
+            if (weights_[i].rows()!=static_cast<Eigen::Index>(w_r) || weights_[i].cols()!=static_cast<Eigen::Index>(w_c) || biases_[i].size()!=static_cast<Eigen::Index>(b_s)) { return false; }
+            weights_[i] = PPOC::byte_array_to_eigen_matrix(file->get_buffer(static_cast<uint64_t>(w_r)*w_c*sizeof(float)), w_r, w_c); if(file->get_error()!=godot::OK && !file->eof_reached()){ return false;}
+            biases_[i] = PPOC::byte_array_to_eigen_vector(file->get_buffer(static_cast<uint64_t>(b_s)*sizeof(float)), b_s); if(file->get_error()!=godot::OK && !file->eof_reached()){ return false;}
         }
         return true;
     }
@@ -264,7 +257,7 @@ public:
 
     void update(NeuralNetworkContinuous& net) {
         if (net.grad_weights_.size() != net.weights_.size() || net.grad_biases_.size() != net.biases_.size()) {
-            godot::UtilityFunctions::printerr("AdamOptimizerContinuous::update: Grad/param size mismatch."); return;
+            return;
         }
         t_++;
         for (size_t i=0; i<net.weights_.size(); ++i) {
@@ -298,19 +291,19 @@ public:
         for (size_t i = 0; i < net_structure.weights_.size(); ++i) {
             uint64_t mw_bs = static_cast<uint64_t>(net_structure.weights_[i].size()) * sizeof(float);
             m_weights_[i] = PPOC::byte_array_to_eigen_matrix(file->get_buffer(mw_bs), net_structure.weights_[i].rows(), net_structure.weights_[i].cols());
-            if (file->get_error() != godot::OK && !file->eof_reached()){godot::UtilityFunctions::printerr("AdamCont load mW",i); return false;}
+            if (file->get_error() != godot::OK && !file->eof_reached()){ return false;}
             
             uint64_t vw_bs = static_cast<uint64_t>(net_structure.weights_[i].size()) * sizeof(float);
             v_weights_[i] = PPOC::byte_array_to_eigen_matrix(file->get_buffer(vw_bs), net_structure.weights_[i].rows(), net_structure.weights_[i].cols());
-            if (file->get_error() != godot::OK && !file->eof_reached()){godot::UtilityFunctions::printerr("AdamCont load vW",i);return false;}
+            if (file->get_error() != godot::OK && !file->eof_reached()){return false;}
             
             uint64_t mb_bs = static_cast<uint64_t>(net_structure.biases_[i].size()) * sizeof(float);
             m_biases_[i] = PPOC::byte_array_to_eigen_vector(file->get_buffer(mb_bs), net_structure.biases_[i].size());
-            if (file->get_error() != godot::OK && !file->eof_reached()){godot::UtilityFunctions::printerr("AdamCont load mB",i);return false;}
+            if (file->get_error() != godot::OK && !file->eof_reached()){return false;}
             
             uint64_t vb_bs = static_cast<uint64_t>(net_structure.biases_[i].size()) * sizeof(float);
             v_biases_[i] = PPOC::byte_array_to_eigen_vector(file->get_buffer(vb_bs), net_structure.biases_[i].size());
-            if (file->get_error() != godot::OK && !file->eof_reached()){godot::UtilityFunctions::printerr("AdamCont load vB",i);return false;}
+            if (file->get_error() != godot::OK && !file->eof_reached()){return false;}
         }
         return true;
     }
@@ -454,22 +447,22 @@ public:
     }
 
     bool load_model_binary(const godot::Ref<godot::FileAccess>& file) {
-        if (!actor_.load_parameters_binary(file)) {godot::UtilityFunctions::printerr("PPOCoreCont load_bin: fail actor params"); return false;}
-        if (!critic_.load_parameters_binary(file)) {godot::UtilityFunctions::printerr("PPOCoreCont load_bin: fail critic params");return false;}
-        if (!actor_optimizer_.load_state_binary(file, actor_)) {godot::UtilityFunctions::printerr("PPOCoreCont load_bin: fail actor opt");return false;}
-        if (!critic_optimizer_.load_state_binary(file, critic_)) {godot::UtilityFunctions::printerr("PPOCoreCont load_bin: fail critic opt");return false;}
+        if (!actor_.load_parameters_binary(file)) { return false;}
+        if (!critic_.load_parameters_binary(file)) {return false;}
+        if (!actor_optimizer_.load_state_binary(file, actor_)) {return false;}
+        if (!critic_optimizer_.load_state_binary(file, critic_)) {return false;}
         
-        uint32_t lstds_s = file->get_32(); if(file->get_error()!=godot::OK){godot::UtilityFunctions::printerr("PPOCoreCont load_bin: fail read log_stds size");return false;}
-        if (lstds_s != static_cast<uint32_t>(config_.action_dim)) {godot::UtilityFunctions::printerr("PPOCoreCont load_binary: actor_log_stds_ size mismatch."); return false;}
+        uint32_t lstds_s = file->get_32(); if(file->get_error()!=godot::OK){return false;}
+        if (lstds_s != static_cast<uint32_t>(config_.action_dim)) { return false;}
         actor_log_stds_ = PPOC::byte_array_to_eigen_vector(file->get_buffer(lstds_s * sizeof(float)), lstds_s); 
-        if(file->get_error()!=godot::OK && !file->eof_reached()){godot::UtilityFunctions::printerr("PPOCoreCont load_bin: fail read log_stds data");return false;}
+        if(file->get_error()!=godot::OK && !file->eof_reached()){return false;}
         
-        t_log_stds_ = static_cast<int>(file->get_32()); if(file->get_error()!=godot::OK){godot::UtilityFunctions::printerr("PPOCoreCont load_bin: fail read t_log_stds");return false;}
+        t_log_stds_ = static_cast<int>(file->get_32()); if(file->get_error()!=godot::OK){return false;}
         m_log_stds_.resize(lstds_s); v_log_stds_.resize(lstds_s); 
         m_log_stds_ = PPOC::byte_array_to_eigen_vector(file->get_buffer(lstds_s * sizeof(float)), lstds_s); 
-        if(file->get_error()!=godot::OK && !file->eof_reached()){godot::UtilityFunctions::printerr("PPOCoreCont load_bin: fail read m_log_stds");return false;}
+        if(file->get_error()!=godot::OK && !file->eof_reached()){return false;}
         v_log_stds_ = PPOC::byte_array_to_eigen_vector(file->get_buffer(lstds_s * sizeof(float)), lstds_s); 
-        if(file->get_error()!=godot::OK && !file->eof_reached()){godot::UtilityFunctions::printerr("PPOCoreCont load_bin: fail read v_log_stds");return false;}
+        if(file->get_error()!=godot::OK && !file->eof_reached()){return false;}
         return true;
     }
 };
@@ -490,7 +483,7 @@ void PPOC::_bind_methods() {
 }
 
 void PPOC::initialize(const godot::Dictionary& config) {
-    godot::UtilityFunctions::print("PPOC: Initializing...");
+    
     PPOInternalContinuous::PPOCoreConfigContinuous ppo_config; 
     observation_dim_continuous_ = config.get("observation_dim", 0); action_dim_continuous_ = config.get("action_dim", 0);
     ppo_config.obs_dim = observation_dim_continuous_; ppo_config.action_dim = action_dim_continuous_;
@@ -503,17 +496,16 @@ void PPOC::initialize(const godot::Dictionary& config) {
     if (config.has("seed")) { ppo_config.seed = static_cast<unsigned int>(static_cast<int>(config.get("seed",0))); } else { ppo_config.seed = std::random_device{}(); }
     buffer_size_continuous_ = config.get("buffer_size", 2048); train_every_n_steps_continuous_ = config.get("train_every_n_steps", buffer_size_continuous_);
     if (observation_dim_continuous_<=0 || action_dim_continuous_<=0 || ppo_config.actor_hidden_dims.empty() || ppo_config.critic_hidden_dims.empty()) {
-        godot::UtilityFunctions::printerr("PPOC: Invalid config."); initialized_continuous_ = false; return;
+        initialized_continuous_ = false; return;
     }
     ppo_core_continuous_ = std::make_unique<PPOInternalContinuous::PPOCoreContinuous>(ppo_config);
     replay_buffer_continuous_ = std::make_unique<PPOInternalContinuous::ReplayBufferContinuous>(buffer_size_continuous_, ppo_config.seed + 3);
     initialized_continuous_ = true; training_counter_continuous_ = 0; current_observation_continuous_.resize(0); current_action_vector_continuous_.resize(0);
-    godot::UtilityFunctions::print("PPOC: Initialized. Obs dim: ", observation_dim_continuous_, " Action dim: ", action_dim_continuous_);
 }
 
 godot::PackedFloat32Array PPOC::get_action(const godot::PackedFloat32Array& observation_array) {
-    if (!initialized_continuous_) { godot::UtilityFunctions::printerr("PPOC get_action: Not init."); return godot::PackedFloat32Array(); }
-    if (observation_array.size()!=observation_dim_continuous_) { godot::UtilityFunctions::printerr("PPOC get_action: Obs dim mismatch."); return godot::PackedFloat32Array(); }
+    if (!initialized_continuous_) { return godot::PackedFloat32Array(); }
+    if (observation_array.size()!=observation_dim_continuous_) { return godot::PackedFloat32Array(); }
     current_observation_continuous_ = packed_array_to_eigen_vector(observation_array);
     auto [act_vec, lp, val_est] = ppo_core_continuous_->select_action_details(current_observation_continuous_);
     current_action_vector_continuous_ = act_vec; current_action_log_prob_continuous_ = lp; current_value_estimate_continuous_ = val_est;
@@ -521,10 +513,10 @@ godot::PackedFloat32Array PPOC::get_action(const godot::PackedFloat32Array& obse
 }
 
 void PPOC::store_experience(float reward, const godot::PackedFloat32Array& next_observation_array, bool done) {
-    if (!initialized_continuous_) { godot::UtilityFunctions::printerr("PPOC store_experience: Not init."); return; }
-    if (next_observation_array.size()!=observation_dim_continuous_) { godot::UtilityFunctions::printerr("PPOC store_experience: Next obs dim mismatch."); return; }
+    if (!initialized_continuous_) { return; }
+    if (next_observation_array.size()!=observation_dim_continuous_) { return; }
     if (current_observation_continuous_.size()!=observation_dim_continuous_ || current_action_vector_continuous_.size()!=action_dim_continuous_) { 
-        godot::UtilityFunctions::printerr("PPOC store_experience: current_observation_ or current_action_vector_ invalid."); return;
+        return;
     }
     Eigen::VectorXf next_obs = packed_array_to_eigen_vector(next_observation_array);
     replay_buffer_continuous_->add_transition(current_observation_continuous_, current_action_vector_continuous_, reward, next_obs, done, current_action_log_prob_continuous_, current_value_estimate_continuous_);
@@ -533,7 +525,7 @@ void PPOC::store_experience(float reward, const godot::PackedFloat32Array& next_
 }
 
 void PPOC::train() {
-    if (!initialized_continuous_) { godot::UtilityFunctions::printerr("PPOC train_policy: Not init."); return; }
+    if (!initialized_continuous_) {return; }
     if (replay_buffer_continuous_->size() == 0) { return; }
     float last_val_gae = 0.0f;
     if (!replay_buffer_continuous_->buffer_.empty()) { 
@@ -544,28 +536,28 @@ void PPOC::train() {
 }
 
 bool PPOC::save_model(const godot::String& file_path) {
-    if (!initialized_continuous_ || !ppo_core_continuous_) { godot::UtilityFunctions::printerr("PPOC save_model: Not init."); return false; }
+    if (!initialized_continuous_ || !ppo_core_continuous_) { return false; }
     godot::Error err; godot::Ref<godot::FileAccess> file = godot::FileAccess::open(file_path, godot::FileAccess::WRITE);
-    if (file.is_null() || !file->is_open()) { err=godot::FileAccess::get_open_error(); godot::UtilityFunctions::printerr("PPOC save_model: Failed to open '",file_path,"'. Err: ",(int)err); return false; }
+    if (file.is_null() || !file->is_open()) { err=godot::FileAccess::get_open_error(); return false; }
     file->store_32(PPO_AGENT_CONTINUOUS_MAGIC_NUMBER); file->store_32(PPO_AGENT_CONTINUOUS_FORMAT_VERSION);
     file->store_32(static_cast<uint32_t>(observation_dim_continuous_)); file->store_32(static_cast<uint32_t>(action_dim_continuous_));
     ppo_core_continuous_->save_model_binary(file);
-    if (file->get_error() != godot::OK) { godot::UtilityFunctions::printerr("PPOC save_model: Error during file write."); file->close(); return false; }
-    file->close(); godot::UtilityFunctions::print("PPOC: Model saved (binary) to '", file_path, "'"); return true;
+    if (file->get_error() != godot::OK) {  file->close(); return false; }
+    file->close(); return true;
 }
 
 bool PPOC::load_model(const godot::String& file_path) {
-    if (!initialized_continuous_ || !ppo_core_continuous_) { godot::UtilityFunctions::printerr("PPOC load_model: Must be init first."); return false; }
-    if (!godot::FileAccess::file_exists(file_path)) { godot::UtilityFunctions::printerr("PPOC load_model: File not found '",file_path,"'."); return false; }
+    if (!initialized_continuous_ || !ppo_core_continuous_) { return false; }
+    if (!godot::FileAccess::file_exists(file_path)) {  return false; }
     godot::Error err; godot::Ref<godot::FileAccess> file = godot::FileAccess::open(file_path, godot::FileAccess::READ);
-    if (file.is_null() || !file->is_open()) { err=godot::FileAccess::get_open_error(); godot::UtilityFunctions::printerr("PPOC load_model: Failed to open '",file_path,"'. Err: ",(int)err); return false; }
-    uint32_t magic = file->get_32(); if(file->get_error()!=godot::OK || magic!=PPO_AGENT_CONTINUOUS_MAGIC_NUMBER){godot::UtilityFunctions::printerr("PPOC load_model: Invalid magic number.");file->close();return false;}
-    uint32_t version = file->get_32(); if(file->get_error()!=godot::OK || version>PPO_AGENT_CONTINUOUS_FORMAT_VERSION){godot::UtilityFunctions::printerr("PPOC load_model: Unsupported version.");file->close();return false;}
+    if (file.is_null() || !file->is_open()) { err=godot::FileAccess::get_open_error();  return false; }
+    uint32_t magic = file->get_32(); if(file->get_error()!=godot::OK || magic!=PPO_AGENT_CONTINUOUS_MAGIC_NUMBER){file->close();return false;}
+    uint32_t version = file->get_32(); if(file->get_error()!=godot::OK || version>PPO_AGENT_CONTINUOUS_FORMAT_VERSION){file->close();return false;}
     uint32_t s_obs_d = file->get_32(); uint32_t s_act_d = file->get_32(); if(file->get_error()!=godot::OK) {file->close(); return false;}
     if (static_cast<int>(s_obs_d)!=observation_dim_continuous_ || static_cast<int>(s_act_d)!=action_dim_continuous_) {
-        godot::UtilityFunctions::printerr("PPOC load_model: Dim mismatch! Agent: obs=",observation_dim_continuous_," act=",action_dim_continuous_,". Model: obs=",s_obs_d," act=",s_act_d,"."); file->close(); return false; 
+         file->close(); return false; 
     }
-    if (!ppo_core_continuous_->load_model_binary(file)) { godot::UtilityFunctions::printerr("PPOC load_model: PPOCoreContinuous failed to load."); file->close(); return false; }
-    if (file->get_error()!=godot::OK && !file->eof_reached()) { godot::UtilityFunctions::printerr("PPOC load_model: Error during read or file not fully read."); file->close(); return false; }
-    file->close(); godot::UtilityFunctions::print("PPOC: Model loaded (binary) from '", file_path, "'"); return true;
+    if (!ppo_core_continuous_->load_model_binary(file)) {file->close(); return false; }
+    if (file->get_error()!=godot::OK && !file->eof_reached()) { file->close(); return false; }
+    file->close(); return true;
 }
