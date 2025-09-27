@@ -15,99 +15,76 @@ Install Instructions:
 
 Example:
 
-This Example will move an Agent to a goal with the discrete PPO Model
+This Example will move an Agent(Sprite2D) to a goal(Sprite2D) with the discrete PPO Model
 ```
 extends Node2D
 
-@onready var agent: Sprite2D = $Agent
-@onready var goal: Sprite2D = $Goal
-
-var ppo: PPO
-const AGENT_SPEED: float = 200.0
-const MAX_EPISODE_STEPS: int = 400 
-const GOAL_REACHED_RADIUS: float = 25.0
-
-const OBSERVATION_DIM = 4 
-const ACTION_DIM = 4
-
-const BUFFER_SIZE = 1024
-const TRAIN_EVERY_N_STEPS = 1024
-
-var current_observation: PackedFloat32Array
-var episode_count: int = 0
-var steps_in_episode: int = 0
-var total_reward_in_episode: float = 0.0
+@onready var p := $P
+@onready var g := $G
+var agent : PPOC
+const mult : int = 20
 
 func _ready() -> void:
-	ppo = PPO.new()
-	ppo.initialize({
-		"observation_dim":4,
-		"action_dim":4,
-		"actor_hidden_dims":[64,32],
-		"critic_hidden_dims":[64, 32],
-		"lr_actor":0.003,
-		"lr_critic":0.001,
-		"gamma":0.99,
-		"lamda_gae":0.95,
+	agent = PPOC.new()
+	var config = {
+		"observation_dim": get_observation().size(),
+		"action_dim": 2,
+		"actor_hidden_dims": [16, 16], 
+		"critic_hidden_dims": [16, 16],  
+		"lr_actor": 0.0003,
+		"lr_critic": 0.001,
+		"gamma": 0.99,
+		"lambda_gae": 0.95,
 		"clip_epsilon": 0.2,
-	})
-	start_new_episode()
+		"ppo_epochs": 10,         
+		"minibatch_size": 64,    
+		"entropy_coeff": 0.01,
+		"buffer_size": 256,
+		"train_every_n_steps": 256 
+	}
+	agent.initialize(config)
+	var path = ProjectSettings.globalize_path("res://model_data//training1.dat")
+	agent.load_model(path)
 
-func start_new_episode():
-	steps_in_episode = 0
-	total_reward_in_episode = 0
-	episode_count += 1
-	var viewport_size = get_viewport_rect().size
-	goal.position = Vector2(
-		randf_range(50, viewport_size.x - 50),
-		randf_range(50, viewport_size.y - 50)
-	)
-	agent.position = viewport_size / 2.0
-	current_observation = get_observation()
-	print("Started Episode #", episode_count)
+func _physics_process(_delta: float) -> void:
+	var obs : PackedFloat32Array = get_observation()
+	var pp : Vector2 = p.position
+	var ep_done : bool = false
+	var reward : float = 0.0
+	var action = agent.get_action(obs)
+	print(action)
+	p.position += Vector2(action[0],action[1])
+	var np : Vector2 = p.position
+	reward += (pp.distance_to(g.position)-np.distance_to(g.position)) * 0.1
+	if p.position.y > 700 or p.position.y < 0 or p.position.x < 0 or p.position.x > 1100: 
+		reward -= 100; ep_done = true
+		p.position = Vector2(200,300)
+	if p.position.distance_to(g.position) < 20:
+		reward += 100; ep_done = true
+		p.position = Vector2(200,300)
+		g.position = Vector2(randi_range(100,1000),randi_range(50,600))
+	var new_obs = get_observation()
+	agent.store_experience(reward,new_obs,ep_done)
+	agent.train()
 
-func get_observation() -> PackedFloat32Array:
-	var viewport_size = get_viewport_rect().size
-	var vector_to_goal = goal.position - agent.position
-	var obs = PackedFloat32Array()
-	obs.resize(OBSERVATION_DIM)
-	obs[0] = agent.position.x / viewport_size.x
-	obs[1] = agent.position.y / viewport_size.y
-	obs[2] = vector_to_goal.x / viewport_size.x
-	obs[3] = vector_to_goal.y / viewport_size.y
+func get_observation():
+	var max_x = 1100.0
+	var max_y = 700.0
+	var dx = (g.position.x - p.position.x) / max_x
+	var dy = (g.position.y - p.position.y) / max_y
+	var obs := PackedFloat32Array([dx,dy])
 	return obs
 
-func _physics_process(delta: float) -> void:
-	var action_index: int = ppo.get_action(current_observation)
-	var last_distance_to_goal = agent.position.distance_to(goal.position)
-	var move_vector = Vector2.ZERO
-	match action_index:
-		0: move_vector = Vector2.UP
-		1: move_vector = Vector2.DOWN
-		2: move_vector = Vector2.LEFT
-		3: move_vector = Vector2.RIGHT
-	agent.position += move_vector * AGENT_SPEED * delta
-	var viewport_size := get_viewport_rect().size
-	agent.position.x = clamp(agent.position.x, 0, viewport_size.x)
-	agent.position.y = clamp(agent.position.y, 0, viewport_size.y)
-	var new_distance_to_goal = agent.position.distance_to(goal.position)
-	var reward: float = 0.0
-	var done: bool = false
-	reward = (last_distance_to_goal - new_distance_to_goal) * 0.1
-	if new_distance_to_goal < GOAL_REACHED_RADIUS:
-		reward += 100.0
-		done = true
-		print("Goal Reached! Reward: ", total_reward_in_episode + reward)
-	reward -= 0.1
-	steps_in_episode += 1
-	if steps_in_episode >= MAX_EPISODE_STEPS:
-		done = true
-		reward -= 20.0
-		print("Time limit reached. Reward: ", total_reward_in_episode + reward)
-	total_reward_in_episode += reward
-	var next_observation = get_observation()
-	ppo.store_experience(reward, next_observation, done)
-	current_observation = next_observation
-	if done:
-		start_new_episode()
+func _unhandled_input(_event: InputEvent) -> void:
+	if Input.is_action_just_pressed("change_speed"):
+		if Engine.physics_ticks_per_second == 60 * mult:
+			Engine.physics_ticks_per_second = 60
+			Engine.max_physics_steps_per_frame = 8
+		else:
+			Engine.physics_ticks_per_second = 60 * mult
+			Engine.max_physics_steps_per_frame = 32
+	if Input.is_action_just_pressed("save_model"):
+		var path = ProjectSettings.globalize_path("res://model_data//training1.dat")
+		agent.save_model(path)
+
 ```
