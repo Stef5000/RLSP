@@ -1,7 +1,7 @@
 // Include your classes, that you want to expose to Godot
 #include "ppo.h"
 #include "ppoc.h"
-//#include "dqn.h"
+#include "dqn.h"
 
 #include <gdextension_interface.h>
 #include <godot_cpp/core/class_db.hpp>
@@ -18,7 +18,7 @@ void initialize_gdextension_types(ModuleInitializationLevel p_level)
 
 	GDREGISTER_CLASS(PPO)
 	GDREGISTER_CLASS(PPOC)
-	//GDREGISTER_CLASS(DQN)
+	GDREGISTER_CLASS(DQN)
 }
 
 void uninitialize_gdextension_types(ModuleInitializationLevel p_level) {
