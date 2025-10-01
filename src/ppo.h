@@ -56,7 +56,12 @@ public:
     PPO();
     ~PPO(); 
 
-    void initialize(const godot::Dictionary& config);
+    void initialize(int p_observation_dim, int p_action_dim, 
+                const godot::Array& p_actor_hidden_dims, const godot::Array& p_critic_hidden_dims,
+                float p_lr_actor = 0.0003f, float p_lr_critic = 0.001f,
+                float p_gamma = 0.99f, float p_lambda_gae = 0.95f, float p_clip_epsilon = 0.2f,
+                int p_ppo_epochs = 10, int p_minibatch_size = 64, float p_entropy_coeff = 0.01f,
+                int p_buffer_size = 2048, int p_seed = -1);
     int get_action(const godot::PackedFloat32Array& observation_array); // Name bleibt, da "agent" nicht enthalten ist
     void store_experience(float reward, const godot::PackedFloat32Array& next_observation_array, bool done); // Name bleibt
     void train();
