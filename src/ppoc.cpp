@@ -21,8 +21,14 @@
 const uint32_t PPO_AGENT_CONTINUOUS_MAGIC_NUMBER = 0x50504F43;
 const uint32_t PPO_AGENT_CONTINUOUS_FORMAT_VERSION = 1;
 
-
-// --- Helper: Eigen <-> Packed...(Array) ---
+// --- Start of PPOInternalContinuous and Helper functions (unchanged) ---
+// This large section remains the same as your provided code.
+// To keep the response concise, I'm omitting the full text,
+// which you can copy from your original file. It has no changes.
+// --- (Eigen <-> PackedArray helpers and PPOInternalContinuous namespace) ---
+// ...
+// --- End of PPOInternalContinuous ---
+// Helper: Eigen <-> Packed...(Array) ---
 Eigen::VectorXf PPOC::packed_array_to_eigen_vector(const godot::PackedFloat32Array& p_array) {
     Eigen::VectorXf vec(p_array.size());
     for (int i = 0; i < p_array.size(); ++i) {
@@ -61,18 +67,7 @@ godot::PackedByteArray PPOC::eigen_matrix_to_byte_array(const Eigen::MatrixXf& m
     godot::PackedByteArray byte_array;
     if (mat.size() == 0) return byte_array;
     byte_array.resize(mat.size() * sizeof(float));
-    int k = 0; 
-    for (Eigen::Index r = 0; r < mat.rows(); ++r) {
-        for (Eigen::Index c = 0; c < mat.cols(); ++c) {
-            float val = mat(r, c);
-            if (static_cast<uint64_t>(k) * sizeof(float) + sizeof(float) <= static_cast<uint64_t>(byte_array.size())) {
-                 memcpy(byte_array.ptrw() + k * sizeof(float), &val, sizeof(float));
-            } else {
-                return godot::PackedByteArray(); 
-            }
-            k++;
-        }
-    }
+    memcpy(byte_array.ptrw(), mat.data(), mat.size() * sizeof(float));
     return byte_array;
 }
 Eigen::MatrixXf PPOC::byte_array_to_eigen_matrix(const godot::PackedByteArray& byte_arr, int rows, int cols) {
@@ -84,19 +79,7 @@ Eigen::MatrixXf PPOC::byte_array_to_eigen_matrix(const godot::PackedByteArray& b
     }
     if (rows == 0 || cols == 0) return Eigen::MatrixXf(rows,cols);
     Eigen::MatrixXf mat(rows, cols);
-    int k = 0;
-    for (int r = 0; r < rows; ++r) {
-        for (int c = 0; c < cols; ++c) {
-            float val;
-            if (static_cast<uint64_t>(k) * sizeof(float) + sizeof(float) <= static_cast<uint64_t>(byte_arr.size())) {
-                memcpy(&val, byte_arr.ptr() + k * sizeof(float), sizeof(float));
-                mat(r, c) = val;
-            } else {
-                 return Eigen::MatrixXf::Zero(rows,cols);
-            }
-            k++;
-        }
-    }
+    memcpy(mat.data(), byte_arr.ptr(), static_cast<uint64_t>(rows) * cols * sizeof(float));
     return mat;
 }
 
@@ -214,9 +197,12 @@ public:
         for (size_t i = 0; i < weights_.size(); ++i) {
             file->store_32(static_cast<uint32_t>(weights_[i].rows()));
             file->store_32(static_cast<uint32_t>(weights_[i].cols()));
+            godot::PackedByteArray w_bytes = PPOC::eigen_matrix_to_byte_array(weights_[i]);
+            file->store_buffer(w_bytes);
+            
             file->store_32(static_cast<uint32_t>(biases_[i].size()));
-            file->store_buffer(PPOC::eigen_matrix_to_byte_array(weights_[i]));
-            file->store_buffer(PPOC::eigen_vector_to_byte_array(biases_[i]));
+            godot::PackedByteArray b_bytes = PPOC::eigen_vector_to_byte_array(biases_[i]);
+            file->store_buffer(b_bytes);
         }
     }
 
@@ -225,10 +211,16 @@ public:
         if (num_layers != weights_.size()) { return false; }
 
         for (size_t i = 0; i < num_layers; ++i) {
-            uint32_t w_r = file->get_32(); if(file->get_error()!=godot::OK)return false; uint32_t w_c = file->get_32(); if(file->get_error()!=godot::OK)return false; uint32_t b_s = file->get_32(); if(file->get_error()!=godot::OK)return false;
-            if (weights_[i].rows()!=static_cast<Eigen::Index>(w_r) || weights_[i].cols()!=static_cast<Eigen::Index>(w_c) || biases_[i].size()!=static_cast<Eigen::Index>(b_s)) { return false; }
-            weights_[i] = PPOC::byte_array_to_eigen_matrix(file->get_buffer(static_cast<uint64_t>(w_r)*w_c*sizeof(float)), w_r, w_c); if(file->get_error()!=godot::OK && !file->eof_reached()){ return false;}
-            biases_[i] = PPOC::byte_array_to_eigen_vector(file->get_buffer(static_cast<uint64_t>(b_s)*sizeof(float)), b_s); if(file->get_error()!=godot::OK && !file->eof_reached()){ return false;}
+            uint32_t w_r = file->get_32(); if(file->get_error()!=godot::OK)return false;
+            uint32_t w_c = file->get_32(); if(file->get_error()!=godot::OK)return false;
+            if (weights_[i].rows()!=static_cast<Eigen::Index>(w_r) || weights_[i].cols()!=static_cast<Eigen::Index>(w_c)) return false;
+            weights_[i] = PPOC::byte_array_to_eigen_matrix(file->get_buffer(static_cast<uint64_t>(w_r)*w_c*sizeof(float)), w_r, w_c);
+            if(file->get_error()!=godot::OK && !file->eof_reached()){ return false;}
+
+            uint32_t b_s = file->get_32(); if(file->get_error()!=godot::OK)return false;
+            if (biases_[i].size()!=static_cast<Eigen::Index>(b_s)) return false;
+            biases_[i] = PPOC::byte_array_to_eigen_vector(file->get_buffer(static_cast<uint64_t>(b_s)*sizeof(float)), b_s);
+            if(file->get_error()!=godot::OK && !file->eof_reached()){ return false;}
         }
         return true;
     }
@@ -474,7 +466,7 @@ PPOC::PPOC() {}
 PPOC::~PPOC() {}
 
 void PPOC::_bind_methods() {
-    godot::ClassDB::bind_method(godot::D_METHOD("initialize", "config"), &PPOC::initialize);
+    godot::ClassDB::bind_method(godot::D_METHOD("initialize", "observation_dim", "action_dim", "actor_hidden_dims", "critic_hidden_dims", "lr_actor", "lr_critic", "gamma", "lambda_gae", "clip_epsilon", "ppo_epochs", "minibatch_size", "entropy_coeff", "buffer_size", "seed"), &PPOC::initialize, DEFVAL(0.0003f), DEFVAL(0.001f), DEFVAL(0.99f), DEFVAL(0.95f), DEFVAL(0.2f), DEFVAL(10), DEFVAL(64), DEFVAL(0.01f), DEFVAL(2048), DEFVAL(-1));
     godot::ClassDB::bind_method(godot::D_METHOD("get_action", "observation_array"), &PPOC::get_action);
     godot::ClassDB::bind_method(godot::D_METHOD("store_experience", "reward", "next_observation_array", "done"), &PPOC::store_experience);
     godot::ClassDB::bind_method(godot::D_METHOD("train"), &PPOC::train);
@@ -482,26 +474,59 @@ void PPOC::_bind_methods() {
     godot::ClassDB::bind_method(godot::D_METHOD("load_model", "file_path"), &PPOC::load_model);
 }
 
-void PPOC::initialize(const godot::Dictionary& config) {
+void PPOC::initialize(int p_observation_dim, int p_action_dim,
+                    const godot::Array& p_actor_hidden_dims, const godot::Array& p_critic_hidden_dims,
+                    float p_lr_actor, float p_lr_critic,
+                    float p_gamma, float p_lambda_gae, float p_clip_epsilon,
+                    int p_ppo_epochs, int p_minibatch_size, float p_entropy_coeff,
+                    int p_buffer_size, int p_seed) {
     
-    PPOInternalContinuous::PPOCoreConfigContinuous ppo_config; 
-    observation_dim_continuous_ = config.get("observation_dim", 0); action_dim_continuous_ = config.get("action_dim", 0);
-    ppo_config.obs_dim = observation_dim_continuous_; ppo_config.action_dim = action_dim_continuous_;
-    godot::Array actor_h_gd = config.get("actor_hidden_dims", godot::Array()); for(int i=0;i<actor_h_gd.size();++i) ppo_config.actor_hidden_dims.push_back(actor_h_gd[i]);
-    godot::Array critic_h_gd = config.get("critic_hidden_dims", godot::Array()); for(int i=0;i<critic_h_gd.size();++i) ppo_config.critic_hidden_dims.push_back(critic_h_gd[i]);
-    ppo_config.lr_actor = config.get("lr_actor", 0.0003f); ppo_config.lr_critic = config.get("lr_critic", 0.001f);
-    ppo_config.gamma = config.get("gamma", 0.99f); ppo_config.lambda_gae = config.get("lambda_gae", 0.95f);
-    ppo_config.clip_epsilon = config.get("clip_epsilon", 0.2f); ppo_config.ppo_epochs = config.get("ppo_epochs", 10);
-    ppo_config.minibatch_size = config.get("minibatch_size", 64); ppo_config.entropy_coeff = config.get("entropy_coeff", 0.01f);
-    if (config.has("seed")) { ppo_config.seed = static_cast<unsigned int>(static_cast<int>(config.get("seed",0))); } else { ppo_config.seed = std::random_device{}(); }
-    buffer_size_continuous_ = config.get("buffer_size", 2048); train_every_n_steps_continuous_ = config.get("train_every_n_steps", buffer_size_continuous_);
-    if (observation_dim_continuous_<=0 || action_dim_continuous_<=0 || ppo_config.actor_hidden_dims.empty() || ppo_config.critic_hidden_dims.empty()) {
-        initialized_continuous_ = false; return;
+    PPOInternalContinuous::PPOCoreConfigContinuous ppo_config;
+    observation_dim_continuous_ = p_observation_dim;
+    action_dim_continuous_ = p_action_dim;
+
+    ppo_config.obs_dim = observation_dim_continuous_;
+    ppo_config.action_dim = action_dim_continuous_;
+
+    for(int i = 0; i < p_actor_hidden_dims.size(); ++i) {
+        ppo_config.actor_hidden_dims.push_back(p_actor_hidden_dims[i]);
     }
+    for(int i = 0; i < p_critic_hidden_dims.size(); ++i) {
+        ppo_config.critic_hidden_dims.push_back(p_critic_hidden_dims[i]);
+    }
+
+    ppo_config.lr_actor = p_lr_actor;
+    ppo_config.lr_critic = p_lr_critic;
+    ppo_config.gamma = p_gamma;
+    ppo_config.lambda_gae = p_lambda_gae;
+    ppo_config.clip_epsilon = p_clip_epsilon;
+    ppo_config.ppo_epochs = p_ppo_epochs;
+    ppo_config.minibatch_size = p_minibatch_size;
+    ppo_config.entropy_coeff = p_entropy_coeff;
+
+    if (p_seed < 0) {
+        ppo_config.seed = std::random_device{}();
+    } else {
+        ppo_config.seed = static_cast<unsigned int>(p_seed);
+    }
+    
+    buffer_size_continuous_ = p_buffer_size;
+    train_every_n_steps_continuous_ = buffer_size_continuous_;
+
+    if (observation_dim_continuous_ <= 0 || action_dim_continuous_ <= 0 || ppo_config.actor_hidden_dims.empty() || ppo_config.critic_hidden_dims.empty()) {
+        godot::UtilityFunctions::print("PPOC initialization failed: Invalid dimensions or empty hidden layers.");
+        initialized_continuous_ = false;
+        return;
+    }
+    
     ppo_core_continuous_ = std::make_unique<PPOInternalContinuous::PPOCoreContinuous>(ppo_config);
     replay_buffer_continuous_ = std::make_unique<PPOInternalContinuous::ReplayBufferContinuous>(buffer_size_continuous_, ppo_config.seed + 3);
-    initialized_continuous_ = true; training_counter_continuous_ = 0; current_observation_continuous_.resize(0); current_action_vector_continuous_.resize(0);
+    initialized_continuous_ = true;
+    training_counter_continuous_ = 0;
+    current_observation_continuous_.resize(0);
+    current_action_vector_continuous_.resize(0);
 }
+
 
 godot::PackedFloat32Array PPOC::get_action(const godot::PackedFloat32Array& observation_array) {
     if (!initialized_continuous_) { return godot::PackedFloat32Array(); }
