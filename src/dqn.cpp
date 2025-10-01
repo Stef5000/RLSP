@@ -5,130 +5,43 @@
 #include <iostream>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
-#include <numeric>
 
 using namespace godot;
 
-
-// --- NEW: SumTree Implementation ---
-SumTree::SumTree(size_t capacity)
-    : capacity(capacity), write_idx(0), current_size(0) {
-    tree.resize(2 * capacity - 1, 0.0f);
-    data.resize(capacity);
+// --- ReplayBuffer Implementation (unchanged) ---
+ReplayBuffer::ReplayBuffer(size_t capacity)
+    : capacity(capacity), index(0), current_size(0) {
+    buffer.resize(capacity);
 }
 
-void SumTree::propagate(size_t idx, float change) {
-    size_t parent = (idx - 1) / 2;
-    tree[parent] += change;
-    if (parent != 0) {
-        propagate(parent, change);
-    }
-}
-
-void SumTree::add(float priority, const Transition& transition) {
-    data[write_idx] = transition;
-    size_t tree_idx = write_idx + capacity - 1;
-    update(tree_idx, priority);
-    
-    write_idx = (write_idx + 1) % capacity;
+void ReplayBuffer::push(const Transition& transition) {
+    buffer[index] = transition;
+    index = (index + 1) % capacity;
     if (current_size < capacity) {
         current_size++;
     }
 }
 
-void SumTree::update(size_t tree_idx, float priority) {
-    float change = priority - tree[tree_idx];
-    tree[tree_idx] = priority;
-    propagate(tree_idx, change);
-}
-
-std::tuple<size_t, float, const Transition&> SumTree::get_leaf(float value) const {
-    size_t parent_idx = 0;
-    while (true) {
-        size_t left_child_idx = 2 * parent_idx + 1;
-        size_t right_child_idx = left_child_idx + 1;
-        
-        if (left_child_idx >= tree.size()) { // Leaf node
-            break;
-        }
-
-        if (value <= tree[left_child_idx]) {
-            parent_idx = left_child_idx;
-        } else {
-            value -= tree[left_child_idx];
-            parent_idx = right_child_idx;
-        }
-    }
-    size_t data_idx = parent_idx - (capacity - 1);
-    return {parent_idx, tree[parent_idx], data[data_idx]};
-}
-
-float SumTree::total_priority() const {
-    return tree[0];
-}
-
-size_t SumTree::size() const {
-    return current_size;
-}
-
-
-// --- MODIFIED: ReplayBuffer Implementation with PER ---
-ReplayBuffer::ReplayBuffer(size_t capacity, float alpha)
-    : tree(capacity), alpha(alpha), max_priority(1.0f), per_epsilon(1e-6f) {}
-
-void ReplayBuffer::push(const Transition& transition) {
-    tree.add(max_priority, transition); // Add new transitions with max priority to ensure they get sampled
-}
-
-std::tuple<std::vector<size_t>, std::vector<const Transition*>, Eigen::VectorXf>
-ReplayBuffer::sample(size_t batch_size, float beta, std::default_random_engine& gen) {
+std::vector<size_t> ReplayBuffer::sample_indices(size_t batch_size, std::default_random_engine& gen) const {
     std::vector<size_t> indices;
-    std::vector<const Transition*> transitions;
-    Eigen::VectorXf is_weights(batch_size);
-
-    if (tree.size() == 0) return {};
-
-    float total_p = tree.total_priority();
-    float segment = total_p / batch_size;
-    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
-
+    if (current_size == 0) return indices;
+    indices.reserve(batch_size);
+    std::uniform_int_distribution<size_t> dist(0, current_size - 1);
     for (size_t i = 0; i < batch_size; ++i) {
-        float a = segment * i;
-        float b = segment * (i + 1);
-        float s = a + dist(gen) * (b - a);
-        
-        auto [tree_idx, priority, transition] = tree.get_leaf(s);
-        
-        indices.push_back(tree_idx);
-        transitions.push_back(&transition);
-        
-        float sampling_prob = priority / total_p;
-        is_weights(i) = std::pow(tree.size() * sampling_prob, -beta);
+        indices.push_back(dist(gen));
     }
-    
-    // Normalize weights
-    is_weights /= is_weights.maxCoeff();
-    
-    return {indices, transitions, is_weights};
+    return indices;
 }
 
-void ReplayBuffer::update_priorities(const std::vector<size_t>& indices, const Eigen::VectorXf& errors) {
-    for (size_t i = 0; i < indices.size(); ++i) {
-        float priority = std::pow(std::abs(errors(i)) + per_epsilon, alpha);
-        tree.update(indices[i], priority);
-        if (priority > max_priority) {
-            max_priority = priority;
-        }
-    }
+const Transition& ReplayBuffer::get(size_t idx) const {
+    return buffer[idx];
 }
 
 size_t ReplayBuffer::size() const {
-    return tree.size();
+    return current_size;
 }
 
-
-// --- DQN_Network Implementation ---
-// Constructor and other methods are unchanged except train()
+// --- DQN_Network Implementation (save/load methods updated) ---
 
 DQN_Network::DQN_Network() : input_size(0), hidden_size1(0), hidden_size2(0), output_size(0), adam_t(0) {}
 
@@ -169,39 +82,35 @@ DQN_Network::DQN_Network(int input_size_, int hidden_size1_, int hidden_size2_, 
 
 Eigen::VectorXf DQN_Network::predict(const Eigen::VectorXf& input) const {
     Eigen::VectorXf L1 = (w1.transpose() * input) + b1;
-    Eigen::VectorXf A1 = L1.array().cwiseMax(0);
-    Eigen::VectorXf L2 = (w2.transpose() * A1) + b2;
-    Eigen::VectorXf A2 = L2.array().cwiseMax(0);
-    return (w3.transpose() * A2) + b3;
+    for (int i = 0; i < L1.size(); ++i) if (L1[i] < 0.0f) L1[i] = 0.0f;
+    Eigen::VectorXf L2 = (w2.transpose() * L1) + b2;
+    for (int i = 0; i < L2.size(); ++i) if (L2[i] < 0.0f) L2[i] = 0.0f;
+    Eigen::VectorXf out = (w3.transpose() * L2) + b3;
+    return out;
 }
 
 Eigen::MatrixXf DQN_Network::predict_batch(const Eigen::MatrixXf& inputs) const {
     if (inputs.rows() == 0) return Eigen::MatrixXf();
     Eigen::MatrixXf L1 = (inputs * w1).rowwise() + b1.transpose();
-    Eigen::MatrixXf A1 = L1.array().cwiseMax(0).matrix();
+    Eigen::MatrixXf A1 = L1.unaryExpr([](float v){ return v > 0.0f ? v : 0.0f; });
     Eigen::MatrixXf L2 = (A1 * w2).rowwise() + b2.transpose();
-    Eigen::MatrixXf A2 = L2.array().cwiseMax(0).matrix();
-    return (A2 * w3).rowwise() + b3.transpose();
+    Eigen::MatrixXf A2 = L2.unaryExpr([](float v){ return v > 0.0f ? v : 0.0f; });
+    Eigen::MatrixXf output = (A2 * w3).rowwise() + b3.transpose();
+    return output;
 }
 
-// --- MODIFIED: train() now uses IS weights ---
-void DQN_Network::train(const Eigen::MatrixXf& inputs, const Eigen::MatrixXf& targets, const Eigen::VectorXf& is_weights, float learning_rate) {
+void DQN_Network::train(const Eigen::MatrixXf& inputs, const Eigen::MatrixXf& targets, float learning_rate) {
     const int m = static_cast<int>(inputs.rows());
     if (m == 0) return;
 
-    // Forward pass
     Eigen::MatrixXf L1 = (inputs * w1).rowwise() + b1.transpose();
-    Eigen::MatrixXf A1 = L1.array().cwiseMax(0).matrix();
+    Eigen::MatrixXf A1 = L1.unaryExpr([](float v){ return v > 0.0f ? v : 0.0f; });
     Eigen::MatrixXf L2 = (A1 * w2).rowwise() + b2.transpose();
-    Eigen::MatrixXf A2 = L2.array().cwiseMax(0).matrix();
+    Eigen::MatrixXf A2 = L2.unaryExpr([](float v){ return v > 0.0f ? v : 0.0f; });
     Eigen::MatrixXf predictions = (A2 * w3).rowwise() + b3.transpose();
 
-    // Backpropagation
     Eigen::MatrixXf error = predictions - targets;
-    
-    // --- KEY CHANGE HERE ---
-    // The error for each sample in the batch is weighted by its IS weight.
-    Eigen::MatrixXf dPred = (2.0f / m) * error.array().colwise() * is_weights.array();
+    Eigen::MatrixXf dPred = (2.0f / m) * error;
 
     Eigen::MatrixXf dW3 = A2.transpose() * dPred;
     Eigen::VectorXf dB3 = dPred.colwise().sum();
@@ -248,7 +157,6 @@ void DQN_Network::train(const Eigen::MatrixXf& inputs, const Eigen::MatrixXf& ta
     adam_step_vector(b1, m_b1, v_b1, dB1);
 }
 
-// save/load/soft_update methods are unchanged
 void DQN_Network::soft_update_from(const DQN_Network& src, float tau) {
     w1 = tau * src.w1 + (1.0f - tau) * w1;
     w2 = tau * src.w2 + (1.0f - tau) * w2;
@@ -257,8 +165,13 @@ void DQN_Network::soft_update_from(const DQN_Network& src, float tau) {
     b2 = tau * src.b2 + (1.0f - tau) * b2;
     b3 = tau * src.b3 + (1.0f - tau) * b3;
 }
+
 void DQN_Network::save_to_file(const Ref<FileAccess>& file) const {
-    file->store_32(input_size); file->store_32(hidden_size1); file->store_32(hidden_size2); file->store_32(output_size);
+    file->store_32(input_size);
+    file->store_32(hidden_size1);
+    file->store_32(hidden_size2);
+    file->store_32(output_size);
+
     PackedByteArray w1_bytes; w1_bytes.resize(w1.size() * sizeof(float)); memcpy(w1_bytes.ptrw(), w1.data(), w1_bytes.size()); file->store_buffer(w1_bytes);
     PackedByteArray w2_bytes; w2_bytes.resize(w2.size() * sizeof(float)); memcpy(w2_bytes.ptrw(), w2.data(), w2_bytes.size()); file->store_buffer(w2_bytes);
     PackedByteArray w3_bytes; w3_bytes.resize(w3.size() * sizeof(float)); memcpy(w3_bytes.ptrw(), w3.data(), w3_bytes.size()); file->store_buffer(w3_bytes);
@@ -266,13 +179,19 @@ void DQN_Network::save_to_file(const Ref<FileAccess>& file) const {
     PackedByteArray b2_bytes; b2_bytes.resize(b2.size() * sizeof(float)); memcpy(b2_bytes.ptrw(), b2.data(), b2_bytes.size()); file->store_buffer(b2_bytes);
     PackedByteArray b3_bytes; b3_bytes.resize(b3.size() * sizeof(float)); memcpy(b3_bytes.ptrw(), b3.data(), b3_bytes.size()); file->store_buffer(b3_bytes);
 }
+
 void DQN_Network::load_from_file(const Ref<FileAccess>& file) {
-    int li = file->get_32(); int lh1 = file->get_32(); int lh2 = file->get_32(); int lo = file->get_32();
+    int li = file->get_32();
+    int lh1 = file->get_32();
+    int lh2 = file->get_32();
+    int lo = file->get_32();
+
     if (li != input_size || lh1 != hidden_size1 || lh2 != hidden_size2 || lo != output_size) {
         input_size = li; hidden_size1 = lh1; hidden_size2 = lh2; output_size = lo;
         w1.resize(input_size, hidden_size1); w2.resize(hidden_size1, hidden_size2); w3.resize(hidden_size2, output_size);
         b1.resize(hidden_size1); b2.resize(hidden_size2); b3.resize(output_size);
     }
+    
     PackedByteArray w1_bytes = file->get_buffer(w1.size() * sizeof(float)); memcpy(w1.data(), w1_bytes.ptr(), w1_bytes.size());
     PackedByteArray w2_bytes = file->get_buffer(w2.size() * sizeof(float)); memcpy(w2.data(), w2_bytes.ptr(), w2_bytes.size());
     PackedByteArray w3_bytes = file->get_buffer(w3.size() * sizeof(float)); memcpy(w3.data(), w3_bytes.ptr(), w3_bytes.size());
@@ -282,57 +201,45 @@ void DQN_Network::load_from_file(const Ref<FileAccess>& file) {
 }
 
 
-// --- DQN (Godot Class) Implementation ---
+// ---------------------- DQN (Godot Class) Implementation ----------------------
+
 void DQN::_bind_methods() {
-    // --- MODIFIED: Added default values for PER params ---
-    ClassDB::bind_method(D_METHOD("initialize", "state_size", "action_size", "learning_rate", "batch_size", "epsilon_decay", "epsilon_min", "hidden_size1", "hidden_size2", "per_alpha", "per_beta_start", "per_beta_frames"), &DQN::initialize, DEFVAL(0.6f), DEFVAL(0.4f), DEFVAL(100000.0f));
+    ClassDB::bind_method(D_METHOD("initialize", "state_size", "action_size", "learning_rate", "batch_size", "epsilon_decay", "epsilon_min", "hidden_size1", "hidden_size2"), &DQN::initialize);
     ClassDB::bind_method(D_METHOD("get_action", "obs"), &DQN::get_action);
     ClassDB::bind_method(D_METHOD("add_experience", "obs", "action", "reward", "next_obs", "done"), &DQN::add_experience);
     ClassDB::bind_method(D_METHOD("train"), &DQN::train);
+    ClassDB::bind_method(D_METHOD("update_target_network"), &DQN::update_target_network);
     ClassDB::bind_method(D_METHOD("end_episode"), &DQN::end_episode);
     ClassDB::bind_method(D_METHOD("save_model", "file_path"), &DQN::save_model);
     ClassDB::bind_method(D_METHOD("load_model", "file_path"), &DQN::load_model);
 }
 
 DQN::DQN() :
-    replay_buffer(), // Will be re-initialized
+    online_net(),
+    target_net(),
+    replay_buffer(50000),
     batch_size(64),
     gamma(0.99f),
     epsilon(1.0f),
     epsilon_decay(0.9995f),
     epsilon_min(0.05f),
     learning_rate(0.001f),
-    tau(0.01f), // Switched to softer updates, more common with PER
+    tau(0.01f),
     input_size(0),
     action_size(0),
-    per_alpha(0.6f),
-    per_beta(0.4f),
-    per_beta_start(0.4f),
-    per_beta_increment(0.0f),
     gen(std::random_device{}()),
-    episode_count(0),
-    total_steps(0)
-{}
+    episode_count(0)
+{
+    // Removed non-portable thread setup
+}
 
-void DQN::initialize(int state_size, int action_size, float p_learning_rate, int p_batch_size, float p_epsilon_decay, float p_epsilon_min, int p_hidden_size1, int p_hidden_size2, float p_per_alpha, float p_per_beta_start, float p_per_beta_frames) {
+void DQN::initialize(int state_size, int action_size, float p_learning_rate, int p_batch_size, float p_epsilon_decay, float p_epsilon_min, int p_hidden_size1, int p_hidden_size2) {
     this->input_size = state_size;
     this->action_size = action_size;
     learning_rate = p_learning_rate;
     batch_size = p_batch_size;
     epsilon_decay = p_epsilon_decay;
     epsilon_min = p_epsilon_min;
-
-    // --- NEW: Initialize PER params ---
-    per_alpha = p_per_alpha;
-    per_beta_start = p_per_beta_start;
-    per_beta = per_beta_start;
-    if (p_per_beta_frames > 0) {
-        per_beta_increment = (1.0f - per_beta_start) / p_per_beta_frames;
-    } else {
-        per_beta_increment = 0.0f;
-    }
-    
-    replay_buffer = ReplayBuffer(50000, per_alpha); // Re-initialize buffer with alpha
 
     online_net = DQN_Network(state_size, p_hidden_size1, p_hidden_size2, action_size);
     target_net = online_net;
@@ -354,33 +261,32 @@ int DQN::get_action(const PackedFloat32Array& obs) {
 
 void DQN::add_experience(const PackedFloat32Array& obs, int action, float reward, const PackedFloat32Array& next_obs, bool done) {
     Transition t;
-    t.state.assign(obs.ptr(), obs.ptr() + obs.size());
-    t.next_state.assign(next_obs.ptr(), next_obs.ptr() + next_obs.size());
+    t.state.resize(obs.size());
+    t.next_state.resize(next_obs.size());
+    for (int i = 0; i < obs.size(); ++i) t.state[i] = obs[i];
+    for (int i = 0; i < next_obs.size(); ++i) t.next_state[i] = next_obs[i];
     t.action = action;
     t.reward = reward;
     t.done = done;
     replay_buffer.push(t);
-    total_steps++;
-    per_beta = std::min(1.0f, per_beta_start + total_steps * per_beta_increment); // Anneal beta
 }
 
-// --- MODIFIED: The train() method is now completely different ---
 void DQN::train() {
     if (replay_buffer.size() < static_cast<size_t>(batch_size)) return;
 
-    // 1. Sample from buffer
-    auto [indices, transitions, is_weights] = replay_buffer.sample(batch_size, per_beta, gen);
-    if (transitions.empty()) return;
+    auto indices = replay_buffer.sample_indices(batch_size, gen);
+    if (indices.empty()) return;
 
-    // 2. Prepare batch data
     Eigen::MatrixXf states(batch_size, input_size);
     Eigen::MatrixXf next_states(batch_size, input_size);
+    Eigen::MatrixXf targets(batch_size, action_size);
+
     std::vector<int> actions(batch_size);
     Eigen::VectorXf rewards(batch_size);
     std::vector<char> dones(batch_size);
 
     for (int i = 0; i < batch_size; ++i) {
-        const Transition& t = *transitions[i];
+        const Transition& t = replay_buffer.get(indices[i]);
         states.row(i) = Eigen::Map<const Eigen::RowVectorXf>(t.state.data(), input_size);
         next_states.row(i) = Eigen::Map<const Eigen::RowVectorXf>(t.next_state.data(), input_size);
         actions[i] = t.action;
@@ -388,12 +294,11 @@ void DQN::train() {
         dones[i] = t.done ? 1 : 0;
     }
 
-    // 3. Get Q-values and calculate targets (Double DQN)
     Eigen::MatrixXf q_states = online_net.predict_batch(states);
     Eigen::MatrixXf q_next_online = online_net.predict_batch(next_states);
     Eigen::MatrixXf q_next_target = target_net.predict_batch(next_states);
-    Eigen::MatrixXf targets = q_states;
-    Eigen::VectorXf td_errors(batch_size);
+
+    targets = q_states;
 
     for (int i = 0; i < batch_size; ++i) {
         float target_value = rewards[i];
@@ -402,21 +307,11 @@ void DQN::train() {
             q_next_online.row(i).maxCoeff(&best_action);
             target_value += gamma * q_next_target(i, best_action);
         }
-        
-        // Calculate TD-error for this sample BEFORE updating the target
-        td_errors(i) = target_value - q_states(i, actions[i]);
-        
-        // Update the target value for the action taken
         targets(i, actions[i]) = target_value;
     }
 
-    // 4. Train the online network with IS weights
-    online_net.train(states, targets, is_weights, learning_rate);
+    online_net.train(states, targets, learning_rate);
 
-    // 5. Update priorities in the replay buffer
-    replay_buffer.update_priorities(indices, td_errors);
-
-    // 6. Soft-update the target network
     update_target_network();
 }
 
