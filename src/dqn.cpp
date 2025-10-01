@@ -328,7 +328,6 @@ void DQN::end_episode() {
 void DQN::save_model(const String &file_path) {
     std::ofstream file(file_path.utf8().get_data(), std::ios::binary);
     if (!file) {
-        UtilityFunctions::print("Failed to open file for saving model!");
         return;
     }
     online_net.save_to_stream(file);
@@ -338,7 +337,6 @@ void DQN::save_model(const String &file_path) {
 void DQN::load_model(const String &file_path) {
     std::ifstream file(file_path.utf8().get_data(), std::ios::binary);
     if (!file) {
-        UtilityFunctions::print("Failed to open file for loading model!");
         return;
     }
     online_net.load_from_stream(file);
