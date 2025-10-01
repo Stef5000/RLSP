@@ -85,8 +85,8 @@ public:
     DQN();
     ~DQN() override = default;
 
-    void initialize(int state_size, int action_size, float learning_rate = 0.0003f, int batch_size = 64,
-                    float epsilon_decay = 0.9999f, float epsilon_min = 0.01f, int hidden_size1, int hidden_size2);
+    void initialize(int state_size, int action_size, float learning_rate, int batch_size,
+                    float epsilon_decay, float epsilon_min, int hidden_size1, int hidden_size2);
 
     int get_action(const PackedFloat32Array& obs);
     void add_experience(const PackedFloat32Array& obs, int action, float reward,
