@@ -11,23 +11,10 @@
 #include <algorithm>
 #include <random>
 
-Eigen::VectorXf PPO::packed_array_to_eigen(const godot::PackedFloat32Array& p_array) {
-    Eigen::VectorXf vec(p_array.size());
-    for (int i = 0; i < p_array.size(); ++i) {
-        vec[i] = p_array[i];
-    }
-    return vec;
-}
-
-godot::PackedFloat32Array PPO::eigen_to_packed_array(const Eigen::VectorXf& p_vector) {
-    godot::PackedFloat32Array arr;
-    arr.resize(p_vector.size());
-    for (int i = 0; i < p_vector.size(); ++i) {
-        arr[i] = p_vector[i];
-    }
-    return arr;
-}
-
+// --- Start of PPOInternal Namespace and its classes (unchanged) ---
+// This large section remains the same as your provided code.
+// To keep the response concise, I'm omitting the full text of PPOInternal,
+// which you can copy from your original file. It has no changes.
 namespace PPOInternal {
 
 bool write_eigen_matrix(godot::FileAccess* file, const Eigen::MatrixXf& matrix) {
@@ -303,13 +290,31 @@ public:
 };
 
 } // Ende PPOInternal Namespace
+// --- End of PPOInternal ---
+
+Eigen::VectorXf PPO::packed_array_to_eigen(const godot::PackedFloat32Array& p_array) {
+    Eigen::VectorXf vec(p_array.size());
+    for (int i = 0; i < p_array.size(); ++i) {
+        vec[i] = p_array[i];
+    }
+    return vec;
+}
+
+godot::PackedFloat32Array PPO::eigen_to_packed_array(const Eigen::VectorXf& p_vector) {
+    godot::PackedFloat32Array arr;
+    arr.resize(p_vector.size());
+    for (int i = 0; i < p_vector.size(); ++i) {
+        arr[i] = p_vector[i];
+    }
+    return arr;
+}
 
 
 PPO::PPO() {}
 PPO::~PPO() {}
 
 void PPO::_bind_methods() {
-    godot::ClassDB::bind_method(godot::D_METHOD("initialize", "config"), &PPO::initialize);
+    godot::ClassDB::bind_method(godot::D_METHOD("initialize", "observation_dim", "action_dim", "actor_hidden_dims", "critic_hidden_dims", "lr_actor", "lr_critic", "gamma", "lambda_gae", "clip_epsilon", "ppo_epochs", "minibatch_size", "entropy_coeff", "buffer_size", "seed"), &PPO::initialize, DEFVAL(0.0003f), DEFVAL(0.001f), DEFVAL(0.99f), DEFVAL(0.95f), DEFVAL(0.2f), DEFVAL(10), DEFVAL(64), DEFVAL(0.01f), DEFVAL(2048), DEFVAL(-1));
     godot::ClassDB::bind_method(godot::D_METHOD("get_action", "observation_array"), &PPO::get_action);
     godot::ClassDB::bind_method(godot::D_METHOD("store_experience", "reward", "next_observation_array", "done"), &PPO::store_experience);
     godot::ClassDB::bind_method(godot::D_METHOD("train"), &PPO::train);
@@ -317,25 +322,58 @@ void PPO::_bind_methods() {
     godot::ClassDB::bind_method(godot::D_METHOD("load_model", "file_path"), &PPO::load_model);
 }
 
-void PPO::initialize(const godot::Dictionary& config) {
+void PPO::initialize(int p_observation_dim, int p_action_dim, 
+                    const godot::Array& p_actor_hidden_dims, const godot::Array& p_critic_hidden_dims,
+                    float p_lr_actor, float p_lr_critic,
+                    float p_gamma, float p_lambda_gae, float p_clip_epsilon,
+                    int p_ppo_epochs, int p_minibatch_size, float p_entropy_coeff,
+                    int p_buffer_size, int p_seed) {
+                        
     PPOInternal::PPOCoreConfig ppo_config;
-    observation_dim_ = config.get("observation_dim", 0); action_dim_ = config.get("action_dim", 0);
-    ppo_config.obs_dim = observation_dim_; ppo_config.action_dim = action_dim_;
-    godot::Array actor_h_gd = config.get("actor_hidden_dims", godot::Array()); for(int i=0;i<actor_h_gd.size();++i)ppo_config.actor_hidden_dims.push_back(actor_h_gd[i]);
-    godot::Array critic_h_gd = config.get("critic_hidden_dims", godot::Array()); for(int i=0;i<critic_h_gd.size();++i)ppo_config.critic_hidden_dims.push_back(critic_h_gd[i]);
-    ppo_config.lr_actor = config.get("lr_actor", 0.0003f); ppo_config.lr_critic = config.get("lr_critic", 0.001f);
-    ppo_config.gamma = config.get("gamma", 0.99f); ppo_config.lambda_gae = config.get("lambda_gae", 0.95f);
-    ppo_config.clip_epsilon = config.get("clip_epsilon", 0.2f); ppo_config.ppo_epochs = config.get("ppo_epochs", 10);
-    ppo_config.minibatch_size = config.get("minibatch_size", 64); ppo_config.entropy_coeff = config.get("entropy_coeff", 0.01f);
-    ppo_config.seed = config.get("seed", (unsigned int)std::random_device{}());
-    buffer_size_ = config.get("buffer_size", 2048); train_every_n_steps_ = config.get("train_every_n_steps", buffer_size_);
-    if(observation_dim_<=0||action_dim_<=0||ppo_config.actor_hidden_dims.empty()||ppo_config.critic_hidden_dims.empty()){
-        initialized_=false; return;
+    observation_dim_ = p_observation_dim;
+    action_dim_ = p_action_dim;
+    
+    ppo_config.obs_dim = observation_dim_;
+    ppo_config.action_dim = action_dim_;
+
+    for(int i = 0; i < p_actor_hidden_dims.size(); ++i) {
+        ppo_config.actor_hidden_dims.push_back(p_actor_hidden_dims[i]);
     }
+    for(int i = 0; i < p_critic_hidden_dims.size(); ++i) {
+        ppo_config.critic_hidden_dims.push_back(p_critic_hidden_dims[i]);
+    }
+
+    ppo_config.lr_actor = p_lr_actor;
+    ppo_config.lr_critic = p_lr_critic;
+    ppo_config.gamma = p_gamma;
+    ppo_config.lambda_gae = p_lambda_gae;
+    ppo_config.clip_epsilon = p_clip_epsilon;
+    ppo_config.ppo_epochs = p_ppo_epochs;
+    ppo_config.minibatch_size = p_minibatch_size;
+    ppo_config.entropy_coeff = p_entropy_coeff;
+
+    if (p_seed < 0) {
+        ppo_config.seed = static_cast<unsigned int>(std::random_device{}());
+    } else {
+        ppo_config.seed = static_cast<unsigned int>(p_seed);
+    }
+    
+    buffer_size_ = p_buffer_size;
+    train_every_n_steps_ = p_buffer_size; // By default, train when buffer is full.
+
+    if(observation_dim_ <= 0 || action_dim_ <= 0 || ppo_config.actor_hidden_dims.empty() || ppo_config.critic_hidden_dims.empty()){
+        godot::UtilityFunctions::print("PPO initialization failed: Invalid dimensions or empty hidden layers.");
+        initialized_ = false; 
+        return;
+    }
+
     ppo_core_ = std::make_unique<PPOInternal::PPOCore>(ppo_config);
     replay_buffer_ = std::make_unique<PPOInternal::ReplayBuffer>(buffer_size_, ppo_config.seed + 3);
-    initialized_ = true; training_counter_ = 0; current_observation_.resize(0);
+    initialized_ = true; 
+    training_counter_ = 0; 
+    current_observation_.resize(0);
 }
+
 int PPO::get_action(const godot::PackedFloat32Array& obs_arr) {
     if(!initialized_){return -1;}
     if(obs_arr.size()!=observation_dim_){return -1;}
