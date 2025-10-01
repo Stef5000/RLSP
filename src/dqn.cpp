@@ -1,14 +1,60 @@
 #include "dqn.h"
 #include <algorithm>
 #include <cmath>
-#include <sstream>
 #include <iostream>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 
 using namespace godot;
 
-// --- ReplayBuffer Implementation (unchanged) ---
+namespace {
+    void save_eigen_matrix(const Ref<FileAccess>& file, const Eigen::MatrixXf& matrix) {
+        PackedByteArray bytes;
+        if (matrix.size() == 0) {
+            file->store_buffer(bytes);
+            return;
+        }
+        bytes.resize(matrix.size() * sizeof(float));
+        memcpy(bytes.ptrw(), matrix.data(), bytes.size());
+        file->store_buffer(bytes);
+    }
+
+    void load_eigen_matrix(const Ref<FileAccess>& file, Eigen::MatrixXf& matrix) {
+        size_t expected_size = matrix.size() * sizeof(float);
+        if (expected_size == 0) return;
+
+        PackedByteArray bytes = file->get_buffer(expected_size);
+        if (bytes.size() == expected_size) {
+             memcpy(matrix.data(), bytes.ptr(), bytes.size());
+        } else {
+            UtilityFunctions::print("Error: Mismatched matrix size on load. Expected ", (int)expected_size, " bytes, got ", bytes.size(), " bytes.");
+        }
+    }
+
+    void save_eigen_vector(const Ref<FileAccess>& file, const Eigen::VectorXf& vector) {
+        PackedByteArray bytes;
+        if (vector.size() == 0) {
+            file->store_buffer(bytes);
+            return;
+        }
+        bytes.resize(vector.size() * sizeof(float));
+        memcpy(bytes.ptrw(), vector.data(), bytes.size());
+        file->store_buffer(bytes);
+    }
+
+    void load_eigen_vector(const Ref<FileAccess>& file, Eigen::VectorXf& vector) {
+        size_t expected_size = vector.size() * sizeof(float);
+        if (expected_size == 0) return;
+
+        PackedByteArray bytes = file->get_buffer(expected_size);
+        if (bytes.size() == expected_size) {
+            memcpy(vector.data(), bytes.ptr(), bytes.size());
+        } else {
+            UtilityFunctions::print("Error: Mismatched vector size on load. Expected ", (int)expected_size, " bytes, got ", bytes.size(), " bytes.");
+        }
+    }
+}
+
 ReplayBuffer::ReplayBuffer(size_t capacity)
     : capacity(capacity), index(0), current_size(0) {
     buffer.resize(capacity);
@@ -41,7 +87,7 @@ size_t ReplayBuffer::size() const {
     return current_size;
 }
 
-// --- DQN_Network Implementation (save/load methods updated) ---
+// --- DQN_Network Implementation ---
 
 DQN_Network::DQN_Network() : input_size(0), hidden_size1(0), hidden_size2(0), output_size(0), adam_t(0) {}
 
@@ -165,39 +211,71 @@ void DQN_Network::soft_update_from(const DQN_Network& src, float tau) {
     b2 = tau * src.b2 + (1.0f - tau) * b2;
     b3 = tau * src.b3 + (1.0f - tau) * b3;
 }
-
 void DQN_Network::save_to_file(const Ref<FileAccess>& file) const {
+    // Save network architecture
     file->store_32(input_size);
     file->store_32(hidden_size1);
     file->store_32(hidden_size2);
     file->store_32(output_size);
+    
+    // Save network parameters (weights and biases)
+    save_eigen_matrix(file, w1);
+    save_eigen_matrix(file, w2);
+    save_eigen_matrix(file, w3);
+    save_eigen_vector(file, b1);
+    save_eigen_vector(file, b2);
+    save_eigen_vector(file, b3);
 
-    PackedByteArray w1_bytes; w1_bytes.resize(w1.size() * sizeof(float)); memcpy(w1_bytes.ptrw(), w1.data(), w1_bytes.size()); file->store_buffer(w1_bytes);
-    PackedByteArray w2_bytes; w2_bytes.resize(w2.size() * sizeof(float)); memcpy(w2_bytes.ptrw(), w2.data(), w2_bytes.size()); file->store_buffer(w2_bytes);
-    PackedByteArray w3_bytes; w3_bytes.resize(w3.size() * sizeof(float)); memcpy(w3_bytes.ptrw(), w3.data(), w3_bytes.size()); file->store_buffer(w3_bytes);
-    PackedByteArray b1_bytes; b1_bytes.resize(b1.size() * sizeof(float)); memcpy(b1_bytes.ptrw(), b1.data(), b1_bytes.size()); file->store_buffer(b1_bytes);
-    PackedByteArray b2_bytes; b2_bytes.resize(b2.size() * sizeof(float)); memcpy(b2_bytes.ptrw(), b2.data(), b2_bytes.size()); file->store_buffer(b2_bytes);
-    PackedByteArray b3_bytes; b3_bytes.resize(b3.size() * sizeof(float)); memcpy(b3_bytes.ptrw(), b3.data(), b3_bytes.size()); file->store_buffer(b3_bytes);
+    // --- ADDED: Save Adam optimizer state ---
+    file->store_32(adam_t); // Save timestep
+    save_eigen_matrix(file, m_w1);
+    save_eigen_matrix(file, v_w1);
+    save_eigen_matrix(file, m_w2);
+    save_eigen_matrix(file, v_w2);
+    save_eigen_matrix(file, m_w3);
+    save_eigen_matrix(file, v_w3);
+    save_eigen_vector(file, m_b1);
+    save_eigen_vector(file, v_b1);
+    save_eigen_vector(file, m_b2);
+    save_eigen_vector(file, v_b2);
+    save_eigen_vector(file, m_b3);
+    save_eigen_vector(file, v_b3);
 }
 
 void DQN_Network::load_from_file(const Ref<FileAccess>& file) {
+    // Load network architecture
     int li = file->get_32();
     int lh1 = file->get_32();
     int lh2 = file->get_32();
     int lo = file->get_32();
 
+    // If architecture is different, re-initialize the network and optimizer states
     if (li != input_size || lh1 != hidden_size1 || lh2 != hidden_size2 || lo != output_size) {
-        input_size = li; hidden_size1 = lh1; hidden_size2 = lh2; output_size = lo;
-        w1.resize(input_size, hidden_size1); w2.resize(hidden_size1, hidden_size2); w3.resize(hidden_size2, output_size);
-        b1.resize(hidden_size1); b2.resize(hidden_size2); b3.resize(output_size);
+        UtilityFunctions::print("Network architecture mismatch. Re-initializing network from loaded file.");
+        // Re-initialize with loaded sizes
+        *this = DQN_Network(li, lh1, lh2, lo);
     }
+
+    load_eigen_matrix(file, w1);
+    load_eigen_matrix(file, w2);
+    load_eigen_matrix(file, w3);
+    load_eigen_vector(file, b1);
+    load_eigen_vector(file, b2);
+    load_eigen_vector(file, b3);
     
-    PackedByteArray w1_bytes = file->get_buffer(w1.size() * sizeof(float)); memcpy(w1.data(), w1_bytes.ptr(), w1_bytes.size());
-    PackedByteArray w2_bytes = file->get_buffer(w2.size() * sizeof(float)); memcpy(w2.data(), w2_bytes.ptr(), w2_bytes.size());
-    PackedByteArray w3_bytes = file->get_buffer(w3.size() * sizeof(float)); memcpy(w3.data(), w3_bytes.ptr(), w3_bytes.size());
-    PackedByteArray b1_bytes = file->get_buffer(b1.size() * sizeof(float)); memcpy(b1.data(), b1_bytes.ptr(), b1_bytes.size());
-    PackedByteArray b2_bytes = file->get_buffer(b2.size() * sizeof(float)); memcpy(b2.data(), b2_bytes.ptr(), b2_bytes.size());
-    PackedByteArray b3_bytes = file->get_buffer(b3.size() * sizeof(float)); memcpy(b3.data(), b3_bytes.ptr(), b3_bytes.size());
+    adam_t = file->get_32();
+    load_eigen_matrix(file, m_w1);
+    load_eigen_matrix(file, v_w1);
+    load_eigen_matrix(file, m_w2);
+    load_eigen_matrix(file, v_w2);
+    load_eigen_matrix(file, m_w3);
+    load_eigen_matrix(file, v_w3);
+    load_eigen_vector(file, m_b1);
+    load_eigen_vector(file, v_b1);
+    load_eigen_vector(file, m_b2);
+    load_eigen_vector(file, v_b2);
+    load_eigen_vector(file, m_b3);
+    load_eigen_vector(file, v_b3);
 }
 
 
@@ -218,7 +296,6 @@ DQN::DQN() :
     online_net(),
     target_net(),
     replay_buffer(50000),
-    batch_size(64),
     gamma(0.99f),
     epsilon(1.0f),
     epsilon_decay(0.9995f),
@@ -227,10 +304,10 @@ DQN::DQN() :
     tau(0.01f),
     input_size(0),
     action_size(0),
+    batch_size(64),
     gen(std::random_device{}()),
     episode_count(0)
 {
-    // Removed non-portable thread setup
 }
 
 void DQN::initialize(int state_size, int action_size, float p_learning_rate, int p_batch_size, float p_epsilon_decay, float p_epsilon_min, int p_hidden_size1, int p_hidden_size2) {
@@ -330,17 +407,38 @@ void DQN::save_model(const String &file_path) {
         UtilityFunctions::print("Error: Could not save DQN model to ", file_path);
         return;
     }
+
     online_net.save_to_file(file);
+
+    file->store_float(epsilon);
+    file->store_32(episode_count);
+
     file->close();
+    UtilityFunctions::print("Successfully saved model to ", file_path);
 }
 
 void DQN::load_model(const String &file_path) {
+    if (!FileAccess::file_exists(file_path)) {
+        UtilityFunctions::print("Error: File not found, cannot load DQN model from ", file_path);
+        return;
+    }
+    
     Ref<FileAccess> file = FileAccess::open(file_path, FileAccess::READ);
     if (file.is_null()) {
-        UtilityFunctions::print("Error: Could not load DQN model from ", file_path);
+        UtilityFunctions::print("Error: Could not open DQN model file for reading: ", file_path);
         return;
     }
     online_net.load_from_file(file);
-    target_net = online_net; // Sync target network
+    if (!file->eof_reached()) {
+        epsilon = file->get_float();
+        episode_count = file->get_32();
+    } else {
+        epsilon = epsilon_min;
+        episode_count = 0;
+    }
+
+    // Sync target network after loading
+    target_net = online_net; 
+    
     file->close();
 }
