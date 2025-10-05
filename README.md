@@ -6,6 +6,8 @@ Supported algorithms:
 
 -PPO (Continous, CPU) as PPOC
 
+-DQN (Discrete) as DQN
+
 
 Install Instructions:
 
